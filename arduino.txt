@@ -1,0 +1,181 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Keypad.h>
+
+#define MOTOR_PWM 3
+#define MOTOR_DIR_A A0
+#define MOTOR_DIR_B A1
+#define SENSOR_IR 2
+
+volatile int pulseCount = 0;
+double rpm = 0;
+unsigned long lastRPMTime = 0;
+
+double setPoint = 0;
+double input, output;
+double Kp = 0.36, Ki = 0.650, Kd = 0.004;
+double lastError = 0, integral = 0;
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+bool motorJalan = false;
+enum Mode { MENU_AWAL, INPUT_RPM, JALANKAN_MOTOR };
+Mode modeSaatIni = MENU_AWAL;
+
+const byte ROWS = 4;
+const byte COLS = 4;
+char keys[ROWS][COLS] = {
+  {'D', 'C', 'B', 'A'},
+  {'#', '9', '6', '3'},
+  {'0', '8', '5', '2'},
+  {'*', '7', '4', '1'}
+};
+byte rowPins[ROWS] = {4,5,6,7};
+byte colPins[COLS] = {8,9,10,11};
+
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+
+void countPulse() {
+    pulseCount++;
+}
+
+void computePID(double dt) {
+    double error = setPoint - rpm;
+    integral += error * dt;
+    double derivative = (error - lastError) / dt;
+    output = (Kp * error) + (Ki * integral) + (Kd * derivative);
+    lastError = error;
+    output = constrain(output, 0, 255);
+}
+
+void setup() {
+    Serial.begin(9600);
+    pinMode(MOTOR_PWM, OUTPUT);
+    pinMode(MOTOR_DIR_A, OUTPUT);
+    pinMode(MOTOR_DIR_B, OUTPUT);
+    pinMode(SENSOR_IR, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(SENSOR_IR), countPulse, RISING);
+
+    digitalWrite(MOTOR_DIR_A, HIGH);
+    digitalWrite(MOTOR_DIR_B, LOW);
+
+    lcd.init();
+    lcd.backlight();
+    tampilkanMenuAwal();
+}
+
+void loop() {
+    // 🔹 Baca input dari Serial Monitor
+    if (Serial.available()) {
+        String inputStr = Serial.readStringUntil('\n');
+        inputStr.trim();
+        if (inputStr.startsWith("RPM:")) {
+            setPoint = inputStr.substring(4).toDouble(); // Ambil nilai setpoint
+            modeSaatIni = JALANKAN_MOTOR;
+            motorJalan = true;
+            integral = 0;
+        } else if (inputStr == "STOP") {
+            matikanMotor();
+        }
+    }
+
+    char key = keypad.getKey();  
+
+    if (modeSaatIni == MENU_AWAL) {  
+        if (key == '1') {  
+            modeSaatIni = INPUT_RPM;
+            setPoint = 0;
+            tampilkanInputRPM();
+        }
+    } 
+    else if (modeSaatIni == INPUT_RPM) {  
+        if (key) {
+            if (key >= '0' && key <= '9') {
+                setPoint = (setPoint * 10) + (key - '0');
+                updateLCDInputRPM();
+            }  
+            else if (key == '#') {  
+                modeSaatIni = JALANKAN_MOTOR;
+                motorJalan = true;
+                integral = 0;
+            }  
+            else if (key == '*') {  
+                setPoint = 0;
+                updateLCDInputRPM();
+            }
+        }
+    } 
+    else  if (modeSaatIni == JALANKAN_MOTOR) {  
+        unsigned long now = millis();
+        if (now - lastRPMTime >= 100) {
+            rpm = (pulseCount * 600.0) / 20.0;
+            pulseCount = 0;
+            lastRPMTime = now;
+        }
+
+        if (motorJalan) {
+            computePID(0.1);
+            analogWrite(MOTOR_PWM, (int)output);
+        } else {
+            analogWrite(MOTOR_PWM, 0);
+        }
+
+        tampilkanRPM();
+
+        if (key == '*') { 
+            setPoint = 0;
+            motorJalan = false;
+            modeSaatIni = MENU_AWAL;
+            tampilkanMenuAwal();
+        }  
+        else if (key == 'C') {  
+            matikanMotor();
+        }
+    }
+
+    // Format JSON untuk Serial Monitor
+    Serial.println("{\"rpm\": " + String(rpm) + ", \"is_play\": \"" + (motorJalan ? "true" : "false") + "\", \"rpmInput\": " + String(setPoint) + "}");
+
+    delay(100);
+}
+
+// ========== Fungsi Tambahan ==========
+void tampilkanMenuAwal() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Pilih Menu:");
+    lcd.setCursor(0, 1);
+    lcd.print("1. SET RPM");
+}
+
+void tampilkanInputRPM() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Masukkan RPM:");
+    lcd.setCursor(0, 1);
+    lcd.print(setPoint);
+}
+
+void updateLCDInputRPM() {
+    lcd.setCursor(0, 1);
+    lcd.print("            ");  
+    lcd.setCursor(0, 1);
+    lcd.print(setPoint);
+}
+
+void tampilkanRPM() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("RPM: ");
+    lcd.print(setPoint);
+    lcd.setCursor(0, 1);
+    lcd.print("Live RPM: ");
+    lcd.print(rpm);
+}
+
+// Fungsi untuk mematikan motor dengan tombol C
+void matikanMotor() {
+    motorJalan = false;
+    analogWrite(MOTOR_PWM, 0);
+    modeSaatIni = MENU_AWAL;
+    tampilkanMenuAwal();
+}

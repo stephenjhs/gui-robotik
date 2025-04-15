@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>UI Motor DC - Simulasi Grafik</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Public Sans', sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-8">
+  <div class="max-w-5xl mx-auto bg-gray-800 shadow-lg rounded-2xl p-8 space-y-8 border border-gray-700">
+    
+    <h1 class="text-3xl font-semibold">User Interface Sistem Kendali Motor DC</h1>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div class="flex items-end gap-4">
+        <button id="toggleBtn" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-semibold shadow transition">Start</button>
+        <div class="flex-1">
+          <label class="block text-sm font-medium text-gray-300 mb-1">Kecepatan: Saat Ini (rpm)</label>
+          <input type="text" id="currentRpm" value="0.00" readonly class="w-full px-5 py-3 border border-gray-700 rounded-xl bg-gray-700 text-right font-mono text-lg shadow-inner text-gray-100">
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-300 mb-1">Set Speed (rpm)</label>
+        <input type="text" value="0" id="setSpeed" class="w-full px-5 py-3 border border-gray-700 rounded-xl bg-gray-700 text-gray-100 text-lg shadow-inner focus:outline-none focus:ring-2 focus:ring-blue-400">
+      </div>
+    </div>
+
+    <div class="mt-6">
+      <button id="connectBtn" class="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-xl font-semibold shadow transition">Connect Arduino</button>
+    </div>
+
+    <div class="mt-4">
+      <h2 class="text-xl font-semibold mb-3">Grafik Realtime Motor DC</h2>
+      <div class="bg-gray-700 border border-gray-600 rounded-xl p-4">
+        <canvas id="rpmChart" height="100"></canvas>
+      </div>
+    </div>
+
+    <div class="flex justify-between pt-6 border-t border-gray-700">
+      <button id="resetBtn" class="bg-gray-700 hover:bg-gray-600 text-gray-200 px-6 py-2 rounded-xl font-medium border border-gray-600 transition">Reset Ulang</button>
+      <button id="exportBtn" class="bg-green-500 hover:bg-green-400 text-white px-6 py-2 rounded-xl font-semibold shadow transition">Export ke Excel</button>
+    </div>
+  </div>
+
+<script>
+  const rpmDisplay = document.getElementById("currentRpm");
+  const toggleBtn = document.getElementById("toggleBtn");
+  const connectBtn = document.getElementById("connectBtn");
+  const resetBtn = document.getElementById("resetBtn");
+  const exportBtn = document.getElementById("exportBtn");
+  const setSpeedInput = document.getElementById("setSpeed");
+
+  const ctx = document.getElementById('rpmChart').getContext('2d');
+  const data = {
+    labels: [],
+    datasets: [{
+      label: 'RPM Motor',
+      data: [],
+      borderColor: '#3B82F6',
+      backgroundColor: 'rgba(59,130,246,0.2)',
+      tension: 0.4,
+    }]
+  };
+
+  const config = {
+    type: 'line',
+    data,
+    options: {
+      responsive: true,
+      scales: {
+        x: {
+          ticks: { color: '#ccc' },
+          grid: { color: '#444' }
+        },
+        y: {
+          ticks: { color: '#ccc' },
+          grid: { color: '#444' },
+          suggestedMin: 0,
+          suggestedMax: 1000
+        }
+      },
+      plugins: {
+        legend: {
+          labels: { color: '#eee' }
+        }
+      }
+    }
+  };
+
+  const rpmChart = new Chart(ctx, config);
+
+  let isMotorRunning = false;
+  let lastChartUpdate = 0;
+  const chartUpdateDelay = 1000;
+  let port, writer;
+
+  let lastUserSetTime = 0; // untuk mendeteksi user baru ubah input
+  const userInputTimeout = 5000; // ms, waktu tunggu sebelum Arduino boleh timpa input
+
+  // Deteksi saat user ubah nilai di input
+  setSpeedInput.addEventListener('input', () => {
+  });
+
+  async function connectToArduino() {
+    try {
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 9600 });
+
+      const encoder = new TextEncoderStream();
+      encoder.readable.pipeTo(port.writable);
+      writer = encoder.writable.getWriter();
+
+      const decoder = new TextDecoderStream();
+      port.readable.pipeTo(decoder.writable);
+      const reader = decoder.readable.getReader();
+
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          buffer += value;
+
+          let lines = buffer.split('\n');
+          buffer = lines.pop(); // sisain sisa terakhir buat buffer berikutnya
+
+          for (const line of lines) {
+            processSerialData(line.trim());
+          }
+        }
+      }
+
+    } catch (err) {
+      console.error("Gagal sambung:", err);
+    }
+  }
+
+  function processSerialData(line) {
+    try {
+      const dataParts = line.split('|');
+      let rpmValue, isPlay, rpmInput;
+
+      dataParts.forEach(part => {
+        const [key, value] = part.split(':');
+        if (key === 'rpm') rpmValue = parseFloat(value);
+        else if (key === 'is_play') isPlay = value === 'true';
+        else if (key === 'rpmInput') rpmInput = parseInt(value);
+      });
+
+    if (rpmValue !== undefined && isMotorRunning) {
+  const now = Date.now();
+  if (now - lastChartUpdate >= chartUpdateDelay) {
+    const timeLabel = new Date().toLocaleTimeString();
+    data.labels.push(timeLabel);
+    data.datasets[0].data.push(rpmValue);
+    rpmDisplay.value = rpmValue.toFixed(2); // hanya update setiap detik
+    rpmChart.update();
+    lastChartUpdate = now;
+  }
+}
+
+
+     if (isPlay !== undefined) {
+  isMotorRunning = isPlay;
+
+  // Ganti tombol
+  toggleBtn.textContent = isPlay ? "Stop" : "Start";
+  toggleBtn.classList.toggle("bg-red-600", isPlay);
+  toggleBtn.classList.toggle("bg-blue-600", !isPlay);
+  toggleBtn.classList.toggle("hover:bg-red-500", isPlay);
+  toggleBtn.classList.toggle("hover:bg-blue-500", !isPlay);
+
+  // Aktifkan/Nonaktifkan input setSpeed
+  setSpeedInput.disabled = isPlay;
+  setSpeedInput.classList.toggle("opacity-50", isPlay); // efek visual
+  setSpeedInput.classList.toggle("cursor-not-allowed", isPlay);
+}
+
+
+      const now = Date.now();
+      if (rpmInput !== undefined && now - lastUserSetTime > userInputTimeout) {
+        setSpeedInput.value = rpmInput;
+      }
+
+    } catch (err) {
+      console.error("Parsing error:", err, " Data:", line);
+    }
+  }
+
+  async function sendToArduino(data) {
+    if (writer) {
+      await writer.write(data + "\n");
+      console.log("Terkirim:", data);
+    } else {
+      alert("Belum terhubung ke Arduino!");
+    }
+  }
+
+  toggleBtn.addEventListener("click", () => {
+    if (isMotorRunning) {
+      sendToArduino("STOP");
+    } else {
+      sendToArduino("RPM:" + setSpeedInput.value);
+    }
+  });
+
+  resetBtn.addEventListener("click", () => {
+    data.labels = [];
+    data.datasets[0].data = [];
+    rpmChart.update();
+  });
+
+  exportBtn.addEventListener("click", () => {
+    const setSpeedValue = setSpeedInput.value;
+    const ws = XLSX.utils.aoa_to_sheet([["Waktu", "Kecepatan RPM (Live)", "Set RPM"], ...data.labels.map((label, index) => [label, data.datasets[0].data[index], setSpeedValue])]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Data RPM");
+    XLSX.writeFile(wb, "Data_RPM_Motor.xlsx");
+  });
+
+  connectBtn.addEventListener("click", connectToArduino);
+</script>
+
+</body>
+</html>
