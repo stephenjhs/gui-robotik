@@ -133,7 +133,8 @@ void loop() {
     }
 
     // Format JSON untuk Serial Monitor
-    Serial.println("{\"rpm\": " + String(rpm) + ", \"is_play\": \"" + (motorJalan ? "true" : "false") + "\", \"rpmInput\": " + String(setPoint) + "}");
+    Serial.println("rpm:" + String(rpm) + "|is_play:" + (motorJalan ? "true" : "false") + "|rpmInput:" + String(setPoint));
+
 
     delay(100);
 }
