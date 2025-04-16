@@ -29,7 +29,7 @@
 
       <div>
         <label class="block text-sm font-medium text-gray-300 mb-1">Set Speed (rpm)</label>
-        <input type="text" value="0" id="setSpeed" class="w-full px-5 py-3 border border-gray-700 rounded-xl bg-gray-700 text-gray-100 text-lg shadow-inner focus:outline-none focus:ring-2 focus:ring-blue-400">
+     <input type="text" value="0" id="setSpeed" class=" w-full px-5 py-3 border border-gray-700 rounded-xl bg-gray-700 text-gray-100 text-lg shadow-inner focus:outline-none focus:ring-2 focus:ring-blue-400">
       </div>
     </div>
 
@@ -57,6 +57,8 @@
   const resetBtn = document.getElementById("resetBtn");
   const exportBtn = document.getElementById("exportBtn");
   const setSpeedInput = document.getElementById("setSpeed");
+
+  const setSpeedHistory = [];
 
   const ctx = document.getElementById('rpmChart').getContext('2d');
   const data = {
@@ -102,13 +104,6 @@
   const chartUpdateDelay = 1000;
   let port, writer;
 
-  let lastUserSetTime = 0; // untuk mendeteksi user baru ubah input
-  const userInputTimeout = 5000; // ms, waktu tunggu sebelum Arduino boleh timpa input
-
-  // Deteksi saat user ubah nilai di input
-  setSpeedInput.addEventListener('input', () => {
-  });
-
   async function connectToArduino() {
     try {
       port = await navigator.serial.requestPort();
@@ -131,7 +126,7 @@
           buffer += value;
 
           let lines = buffer.split('\n');
-          buffer = lines.pop(); // sisain sisa terakhir buat buffer berikutnya
+          buffer = lines.pop();
 
           for (const line of lines) {
             processSerialData(line.trim());
@@ -156,38 +151,37 @@
         else if (key === 'rpmInput') rpmInput = parseInt(value);
       });
 
-    if (rpmValue !== undefined && isMotorRunning) {
-  const now = Date.now();
-  if (now - lastChartUpdate >= chartUpdateDelay) {
-    const timeLabel = new Date().toLocaleTimeString();
-    data.labels.push(timeLabel);
-    data.datasets[0].data.push(rpmValue);
-    rpmDisplay.value = rpmValue.toFixed(2); // hanya update setiap detik
-    rpmChart.update();
-    lastChartUpdate = now;
-  }
-}
+      if (rpmValue !== undefined && isMotorRunning) {
+        const now = Date.now();
 
+        if (now - lastChartUpdate >= chartUpdateDelay) {
+          const timeLabel = new Date().toLocaleTimeString();
+          data.labels.push(timeLabel);
+          data.datasets[0].data.push(rpmValue);
+            setSpeedHistory.push(parseInt(setSpeedInput.value));
+          rpmDisplay.value = rpmValue.toFixed(2);
+          rpmChart.update();
+          lastChartUpdate = now;
+        }
+      }
 
-     if (isPlay !== undefined) {
-  isMotorRunning = isPlay;
+      if (isPlay !== undefined) {
+        isMotorRunning = isPlay;
 
-  // Ganti tombol
-  toggleBtn.textContent = isPlay ? "Stop" : "Start";
-  toggleBtn.classList.toggle("bg-red-600", isPlay);
-  toggleBtn.classList.toggle("bg-blue-600", !isPlay);
-  toggleBtn.classList.toggle("hover:bg-red-500", isPlay);
-  toggleBtn.classList.toggle("hover:bg-blue-500", !isPlay);
+        toggleBtn.textContent = isPlay ? "Stop" : "Start";
+        toggleBtn.classList.toggle("bg-red-600", isPlay);
+        toggleBtn.classList.toggle("bg-blue-600", !isPlay);
+        toggleBtn.classList.toggle("hover:bg-red-500", isPlay);
+        toggleBtn.classList.toggle("hover:bg-blue-500", !isPlay);
 
-  // Aktifkan/Nonaktifkan input setSpeed
-  setSpeedInput.disabled = isPlay;
-  setSpeedInput.classList.toggle("opacity-50", isPlay); // efek visual
-  setSpeedInput.classList.toggle("cursor-not-allowed", isPlay);
-}
-
+        // Ubah status input
+    setSpeedInput.disabled = isPlay;
+    setSpeedInput.classList.toggle("opacity-50", isPlay);
+    setSpeedInput.classList.toggle("cursor-not-allowed", isPlay);
+      }
 
       const now = Date.now();
-      if (rpmInput !== undefined && now - lastUserSetTime > userInputTimeout) {
+      if (rpmInput !== undefined && isPlay == true) {
         setSpeedInput.value = rpmInput;
       }
 
@@ -220,12 +214,19 @@
   });
 
   exportBtn.addEventListener("click", () => {
-    const setSpeedValue = setSpeedInput.value;
-    const ws = XLSX.utils.aoa_to_sheet([["Waktu", "Kecepatan RPM (Live)", "Set RPM"], ...data.labels.map((label, index) => [label, data.datasets[0].data[index], setSpeedValue])]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Data RPM");
-    XLSX.writeFile(wb, "Data_RPM_Motor.xlsx");
-  });
+  const ws = XLSX.utils.aoa_to_sheet([
+    ["Waktu", "Kecepatan RPM (Live)", "Set RPM"],
+    ...data.labels.map((label, index) => [
+      label,
+      data.datasets[0].data[index],
+      setSpeedHistory[index] ?? "", // untuk jaga-jaga kalau datanya belum lengkap
+    ])
+  ]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Data RPM");
+  XLSX.writeFile(wb, "Data_RPM_Motor.xlsx");
+});
+
 
   connectBtn.addEventListener("click", connectToArduino);
 </script>
